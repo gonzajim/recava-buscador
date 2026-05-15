@@ -71,21 +71,22 @@ INSTRUCCIONES DE EVALUACIÓN (OBLIGATORIAS)
 ══════════════════════════════════════════════
 
 1. ESTADOS DE CUMPLIMIENTO (elige ESTRICTAMENTE uno):
-   - "1"  → SÍ cumple: La información requerida está presente de forma explícita, clara e inequívoca.
-   - "0"  → NO cumple: La información requerida no aparece, es insuficiente o ambigua.
+   - "SÍ" → Cumple: La información requerida está presente de forma explícita, clara e inequívoca.
+   - "NO" → NO cumple: La información requerida no aparece, es insuficiente o ambigua.
    - "NA" → No Aplica: El indicador no es aplicable al tipo de empresa o sector del documento.
-   - "FE" → Fuente Externa: El informe remite explícitamente a un documento externo, sitio web u otra fuente para esta información.
+   - "FE" → Fuente Externa: El informe remite explícitamente a un documento externo, sitio web u otra fuente.
 
 2. DETECCIÓN DE FUENTE EXTERNA (FE):
    Si el documento contiene expresiones como "ver sitio web", "disponible en nuestra página corporativa", "consultar el informe de [X]" u otras referencias a fuentes externas para este indicador, el estado DEBE ser obligatoriamente "FE".
 
 3. ESTRUCTURA DE RESPUESTA (JSON estricto):
    Debes devolver EXCLUSIVAMENTE un objeto JSON con estas claves:
-   - "cumple": Uno de los 4 valores: "1", "0", "NA", "FE"
-   - "evidencia_literal": Copia TEXTUALMENTE el fragmento del PDF que sustenta tu evaluación. NO parafrasees ni reformules. Si el resultado es "0" o "NA", déjalo como cadena vacía "".
-   - "analisis_tecnico": Comparativa explícita entre lo que exige la normativa (base legal proporcionada arriba) y lo que el documento efectivamente divulga. Máximo 3 frases.
-   - "justificacion_blanco": OBLIGATORIO si cumple="0" o cumple="NA". Describe con precisión qué dato, métrica o información específica falta en el documento para satisfacer la norma. Si cumple="1" o cumple="FE", déjalo como cadena vacía "".
-   - "ubicacion": Indica la página y sección donde se encontró (o debería encontrarse) la evidencia. Formato: "Página X - [Nombre de la sección]". Si no se localiza, pon "No localizado".
+   - "cumple": Uno de los 4 valores: "SÍ", "NO", "NA", "FE"
+   - "evidencia_literal": Copia TEXTUALMENTE el fragmento del PDF que sustenta tu evaluación. NO parafrasees ni reformules. Si el resultado es "NO" o "NA", déjalo como cadena vacía "".
+   - "pagina_real": Indica solo el NÚMERO de página donde se encontró la evidencia. Si no aplica, pon "N/A".
+   - "analisis_tecnico": Comparativa explícita entre lo que exige la normativa y lo que el documento divulga. Máximo 3 frases.
+   - "justificacion_blanco": OBLIGATORIO si cumple="NO" o cumple="NA". Describe qué dato o información falta. Si cumple="SÍ" o cumple="FE", déjalo vacío "".
+   - "ubicacion": Indica el nombre de la sección (ej. "Estado de Información No Financiera").
 
 ══════════════════════════════════════════════
 REGLA ÉTICA INQUEBRANTABLE

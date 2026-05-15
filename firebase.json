@@ -29,6 +29,21 @@
           "destination": "/index.html"
         }
       ]
+    },
+    {
+      "target": "admin-panel-v2",
+      "public": "public/admin-panel/build",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "rewrites": [
+        {
+          "source": "**",
+          "destination": "/index.html"
+        }
+      ]
     }
   ],
   "emulators": {

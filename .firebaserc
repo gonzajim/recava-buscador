@@ -9,6 +9,9 @@
       "hosting": {
         "admin-panel": [
           "recava-buscador"
+        ],
+        "admin-panel-v2": [
+          "recava-buscador-v2"
         ]
       }
     }
