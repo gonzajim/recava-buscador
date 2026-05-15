@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth } from './firebase';
-import Login from './Login';
+import Auth from './Auth';
 import EmpiricalAuditViewer from './EmpiricalAuditViewer';
 
 // --- NUEVAS IMPORTACIONES PARA EL TEMA ---
@@ -53,7 +53,7 @@ function App() {
           ) : (
             <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '80vh' }}>
               <Paper elevation={3} sx={{ padding: 4 }}>
-                <Login />
+                <Auth />
               </Paper>
             </Box>
           )}
