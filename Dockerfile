@@ -21,7 +21,8 @@ COPY requirements.txt requirements.txt
 
 # Crear y activar un entorno virtual, luego instalar dependencias
 RUN python3 -m venv /opt/venv && \
-    /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
+    /opt/venv/bin/pip install --no-cache-dir -r requirements.txt && \
+    /opt/venv/bin/python -c "import firebase_admin; print('Firebase Admin installed OK')"
 
 # Pre-descargar el modelo de SentenceTransformers
 ENV SENTENCE_TRANSFORMERS_HOME=/app/.cache

@@ -4,8 +4,12 @@ import {
   Box, Typography, Button, Paper, Table,
   TableBody, TableCell, TableContainer, TableHead, TableRow,
   CircularProgress, Switch, FormControlLabel, Chip, Tooltip,
+  Tabs, Tab, List, ListItem, ListItemText, ListItemSecondaryAction, IconButton, Divider
 } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
+import HistoryIcon from '@mui/icons-material/History';
+import DescriptionIcon from '@mui/icons-material/Description';
+import VisibilityIcon from '@mui/icons-material/Visibility';
 import { getAuth } from 'firebase/auth';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8080';
@@ -103,7 +107,31 @@ export default function EmpiricalAuditViewer() {
   const [auditData, setAuditData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [tabValue, setTabValue] = useState(0);
+  const [history, setHistory] = useState([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
   const pollRef = useRef(null);
+
+  const fetchHistory = useCallback(async () => {
+    setLoadingHistory(true);
+    try {
+      const auth = getAuth();
+      const token = await auth.currentUser?.getIdToken();
+      const resp = await fetch(`${API_URL}/api/audit/empirical`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const body = await resp.json();
+      if (body.ok) setHistory(body.data);
+    } catch (err) {
+      console.error('Error cargando historial:', err);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (tabValue === 1) fetchHistory();
+  }, [tabValue, fetchHistory]);
 
   const fetchAuditStatus = useCallback(async (id) => {
     try {
@@ -178,23 +206,82 @@ export default function EmpiricalAuditViewer() {
 
   return (
     <Box sx={{ p: 3 }}>
-      <Typography variant="h4" gutterBottom>
+      <Typography variant="h4" gutterBottom fontWeight="bold">
         Observatorio IBEX 35 – Auditoría NEIS S1
       </Typography>
 
-      {/* ── Panel de lanzamiento ── */}
-      <Paper sx={{ p: 3, mb: 3 }}>
-        <Typography variant="h6" gutterBottom>Lanzar Nueva Auditoría Empírica</Typography>
-        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-          <Button variant="outlined" component="label" sx={{ height: 56, flexGrow: 1 }}>
-            {file ? file.name : 'Seleccionar Archivo PDF'}
-            <input type="file" hidden accept="application/pdf" onChange={(e) => setFile(e.target.files[0])} />
-          </Button>
-          <Button variant="contained" onClick={handleLaunchAudit} disabled={loading || !file} sx={{ height: 56, whiteSpace: 'nowrap' }}>
-            {loading ? <CircularProgress size={24} /> : 'Lanzar Auditoría'}
-          </Button>
+      <Paper sx={{ mb: 3 }}>
+        <Tabs 
+          value={tabValue} 
+          onChange={(e, v) => setTabValue(v)} 
+          indicatorColor="primary" 
+          textColor="primary"
+          variant="fullWidth"
+        >
+          <Tab icon={<DescriptionIcon />} label="Analizar PDF" />
+          <Tab icon={<HistoryIcon />} label="Historial" />
+        </Tabs>
+        
+        <Box sx={{ p: 3 }}>
+          {tabValue === 0 ? (
+            <Box>
+              <Typography variant="h6" gutterBottom>Lanzar Nueva Auditoría Empírica</Typography>
+              <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                <Button variant="outlined" component="label" sx={{ height: 56, flexGrow: 1, borderRadius: 2 }}>
+                  {file ? file.name : 'Seleccionar Archivo PDF'}
+                  <input type="file" hidden accept="application/pdf" onChange={(e) => setFile(e.target.files[0])} />
+                </Button>
+                <Button 
+                  variant="contained" 
+                  onClick={handleLaunchAudit} 
+                  disabled={loading || !file} 
+                  sx={{ height: 56, px: 4, borderRadius: 2 }}
+                >
+                  {loading ? <CircularProgress size={24} color="inherit" /> : 'Lanzar Auditoría'}
+                </Button>
+              </Box>
+              {error && <Typography color="error" sx={{ mt: 2 }}>{error}</Typography>}
+            </Box>
+          ) : (
+            <Box>
+              <Typography variant="h6" gutterBottom>Últimos Informes Generados</Typography>
+              {loadingHistory ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}><CircularProgress /></Box>
+              ) : history.length === 0 ? (
+                <Typography color="text.secondary" align="center" sx={{ py: 3 }}>No hay auditorías previas.</Typography>
+              ) : (
+                <List>
+                  {history.map((item, index) => (
+                    <React.Fragment key={item.thread_id}>
+                      <ListItem 
+                        button 
+                        onClick={() => { setThreadId(item.thread_id); setAuditData(null); }}
+                        sx={{ borderRadius: 2, mb: 1, bgcolor: threadId === item.thread_id ? 'action.selected' : 'transparent' }}
+                      >
+                        <ListItemText 
+                          primary={item.filename} 
+                          secondary={new Date(item.created_at).toLocaleString('es-ES', { dateStyle: 'medium', timeStyle: 'short' })} 
+                        />
+                        <ListItemSecondaryAction>
+                          <Chip 
+                            label={item.status === 'completed' ? 'Completado' : item.status} 
+                            color={item.status === 'completed' ? 'success' : 'warning'} 
+                            size="small" 
+                            sx={{ mr: 2 }}
+                          />
+                          <IconButton edge="end" color="primary" onClick={() => { setThreadId(item.thread_id); setAuditData(null); }}>
+                            <VisibilityIcon />
+                          </IconButton>
+                        </ListItemSecondaryAction>
+                      </ListItem>
+                      {index < history.length - 1 && <Divider component="li" />}
+                    </React.Fragment>
+                  ))}
+                </List>
+              )}
+            </Box>
+          )}
         </Box>
-        {error && <Typography color="error" sx={{ mt: 2 }}>{error}</Typography>}
       </Paper>
 
       {/* ── Tabla de resultados ── */}
