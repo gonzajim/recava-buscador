@@ -11,6 +11,7 @@ from src.config import app, logger, firestore_db
 
 # --- Gemini y Módulo Empírico ---
 from src.empirical_audit_service import run_empirical_audit_async
+from src.legal_cache_service import sync_legal_cache, needs_sync
 import threading
 import tempfile
 import werkzeug.utils
@@ -200,6 +201,18 @@ def patch_empirical_feedback(thread_id):
         return ok({"updated": True})
     except Exception as e:
         return fail(f"Error interno", status=500)
+
+
+@app.route("/api/admin/sync-legal-cache", methods=["POST"])
+def trigger_sync_legal_cache():
+    """Fuerza una sincronización del corpus normativo desde Pinecone a GCS."""
+    require_firebase_user_or_403()
+    try:
+        stale = needs_sync()
+        threading.Thread(target=sync_legal_cache, daemon=True).start()
+        return ok({"message": "Sincronización iniciada en background.", "was_stale": stale}), 202
+    except Exception as e:
+        return fail(f"Error al iniciar sincronización: {str(e)}", status=500)
 
 
 @app.route("/health", methods=["GET"])
