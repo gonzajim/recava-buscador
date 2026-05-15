@@ -1,0 +1,87 @@
+# =====================================================================================
+# cloudbuild.yaml Parametrizado para Entornos PROD y DEV - Versión Final Corregida
+# =====================================================================================
+# Este archivo es una receta ÚNICA. Los triggers de Cloud Build le pasarán
+# las variables _SERVICE_NAME y _FIREBASE_PROJECT_ALIAS para dirigir el despliegue
+# al entorno correcto (Producción o Desarrollo).
+# =====================================================================================
+
+steps:
+  # -------------------------------------------------------------------------------------
+  # PASO 1: Desplegar el Backend en Cloud Run
+  # -------------------------------------------------------------------------------------
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'Deploy-Backend-to-Cloud-Run'
+    entrypoint: 'gcloud'
+    args:
+      - '--verbosity=debug'
+      - 'run'
+      - 'deploy'
+      - '${_SERVICE_NAME}'
+      - '--source'
+      - '.'
+      - '--region'
+      - 'europe-west1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--port'
+      - '8080'
+      - '--project'
+      - '${PROJECT_ID}'
+      - '--env-vars-file'
+      - 'env.yaml'
+      - '--timeout=300s'
+      - '--concurrency=80'
+      - '--cpu=1'
+      - '--memory=2Gi'
+
+  # -------------------------------------------------------------------------------------
+  # PASO 2: Instalar las herramientas de Firebase
+  # -------------------------------------------------------------------------------------
+  - name: 'node:18'
+    id: 'Install-Firebase-Tools'
+    entrypoint: 'npm'
+    args: ['install', 'firebase-tools']
+
+  # -------------------------------------------------------------------------------------
+  # PASO 3: Construir el Frontend (Admin Panel)
+  # -------------------------------------------------------------------------------------
+  # Instala las dependencias del panel de administración
+  - name: 'gcr.io/cloud-builders/npm'
+    id: 'Install-Admin-Panel-Dependencies'
+    args: ['install']
+    dir: 'public/admin-panel' # Ejecuta el comando en este directorio
+
+  # Compila la aplicación de React y crea la carpeta 'build'
+  - name: 'gcr.io/cloud-builders/npm'
+    id: 'Build-Admin-Panel'
+    args: ['run', 'build']
+    dir: 'public/admin-panel' # Ejecuta el comando en este directorio
+    waitFor: ['Install-Admin-Panel-Dependencies']
+
+  # -------------------------------------------------------------------------------------
+  # PASO 4: Desplegar el Frontend en Firebase Hosting
+  # -------------------------------------------------------------------------------------
+  - name: 'node:18'
+    id: 'Deploy-Frontend-to-Firebase'
+    entrypoint: './node_modules/.bin/firebase'
+    args:
+      - 'deploy'
+      - '--project'
+      - '${_FIREBASE_PROJECT_ALIAS}'
+      - '--only'
+      - 'hosting'
+      - '--force'
+    # Espera a que las herramientas de Firebase estén instaladas Y el panel de admin esté construido
+    waitFor: ['Install-Firebase-Tools', 'Build-Admin-Panel']
+
+# =====================================================================================
+# Definición de las variables con valores POR DEFECTO para el entorno de producción.
+# =====================================================================================
+substitutions:
+  _SERVICE_NAME: 'recava-buscador'
+  _FIREBASE_PROJECT_ALIAS: 'prod'
+
+options:
+  defaultLogsBucketBehavior: REGIONAL_USER_OWNED_BUCKET

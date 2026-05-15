@@ -1,0 +1,17 @@
+{
+  "projects": {
+    "prod": "recava-buscador",
+    "dev": "recava-buscador",
+    "default": "recava-buscador"
+  },
+  "targets": {
+    "recava-buscador": {
+      "hosting": {
+        "admin-panel": [
+          "recava-buscador"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}
