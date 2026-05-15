@@ -22,3 +22,4 @@ sentence-transformers==3.0.1
 # --- Firebase y Bases de Datos ---
 firebase-admin==6.6.0
 google-cloud-firestore==2.19.0
+google-cloud-storage==2.19.0

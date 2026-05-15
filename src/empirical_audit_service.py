@@ -5,7 +5,7 @@ import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.cloud.firestore_v1 import SERVER_TIMESTAMP
 from src.config import logger, firestore_db
-from src.vector_service import retrieve_context
+from src.legal_cache_service import get_legal_cache, get_indicator_context
 import google.generativeai as genai
 
 # Lista de indicadores extraída del SDD
@@ -49,30 +49,57 @@ INDICATORS = [
     {"id": "37", "ref": "S1-16 97. b). [2] {99}", "question": "¿Divulga la relación entre la remuneración anual total de la persona con el mayor salario y la remuneración anual total media del conjunto de asalariados, ajustada para tener en cuenta las diferencias de poder adquisitivo entre países?"}
 ]
 
-def _evaluate_indicator(indicator: dict, gemini_file) -> dict:
-    """Evalúa un indicador específico usando el PDF completo y el corpus legal de Pinecone."""
-    try:
-        # 1. Recuperar contexto del corpus legal (Pinecone)
-        query = f"{indicator['ref']} {indicator['question']}"
-        legal_context = retrieve_context(query=query, top_k=3)
 
-        system_prompt = f"""
-        Eres un auditor experto en sostenibilidad (CSRD / ESRS).
-        Debes evaluar si el documento PDF proporcionado cumple con el siguiente indicador:
-        {indicator['ref']} - {indicator['question']}
-        
-        BASE LEGAL / CRITERIOS DE AUDITORÍA (Corpus Experto):
-        Utiliza el siguiente contexto experto extraído de la base de datos legal para entender cómo se debe interpretar y evaluar este indicador de forma rigurosa:
-        {legal_context if legal_context else "No hay contexto adicional específico para este indicador."}
-        
-        INSTRUCCIONES:
-        1. Analiza el documento PDF buscando información relevante teniendo en cuenta los criterios de la base legal.
-        2. Debes devolver un objeto JSON estricto con las siguientes claves:
-        - "cumple": Valores permitidos: "SÍ", "NO", "NA" (No Aplica/No aparece), "FE" (Fuente Externa referenciada).
-        - "evidencia_literal": Extrae literalmente el texto del PDF que justifica tu respuesta. Si es NO o NA, déjalo vacío.
-        - "pagina_real": Indica el número de página donde se encontró la evidencia. Si no aplica o no se encuentra, pon "N/A".
-        - "razonamiento": Explica brevemente por qué consideras que cumple o no cumple, apoyándote en la base legal proporcionada.
-        """
+def _build_system_prompt(indicator: dict, legal_context: str) -> str:
+    """Construye el System Instruction de rigor auditor IBEX35."""
+    return f"""Eres un auditor sénior especializado en sostenibilidad corporativa (CSRD / ESRS).
+Tu tarea es evaluar con rigor profesional si el documento PDF proporcionado cumple con el siguiente indicador normativo:
+
+══════════════════════════════════════════════
+INDICADOR A EVALUAR
+══════════════════════════════════════════════
+Referencia: {indicator['ref']}
+Pregunta: {indicator['question']}
+
+══════════════════════════════════════════════
+BASE LEGAL / CRITERIOS DE AUDITORÍA
+══════════════════════════════════════════════
+{legal_context if legal_context else "No se dispone de contexto legal adicional para este indicador. Evalúa únicamente con base en el texto literal del documento."}
+
+══════════════════════════════════════════════
+INSTRUCCIONES DE EVALUACIÓN (OBLIGATORIAS)
+══════════════════════════════════════════════
+
+1. ESTADOS DE CUMPLIMIENTO (elige ESTRICTAMENTE uno):
+   - "1"  → SÍ cumple: La información requerida está presente de forma explícita, clara e inequívoca.
+   - "0"  → NO cumple: La información requerida no aparece, es insuficiente o ambigua.
+   - "NA" → No Aplica: El indicador no es aplicable al tipo de empresa o sector del documento.
+   - "FE" → Fuente Externa: El informe remite explícitamente a un documento externo, sitio web u otra fuente para esta información.
+
+2. DETECCIÓN DE FUENTE EXTERNA (FE):
+   Si el documento contiene expresiones como "ver sitio web", "disponible en nuestra página corporativa", "consultar el informe de [X]" u otras referencias a fuentes externas para este indicador, el estado DEBE ser obligatoriamente "FE".
+
+3. ESTRUCTURA DE RESPUESTA (JSON estricto):
+   Debes devolver EXCLUSIVAMENTE un objeto JSON con estas claves:
+   - "cumple": Uno de los 4 valores: "1", "0", "NA", "FE"
+   - "evidencia_literal": Copia TEXTUALMENTE el fragmento del PDF que sustenta tu evaluación. NO parafrasees ni reformules. Si el resultado es "0" o "NA", déjalo como cadena vacía "".
+   - "analisis_tecnico": Comparativa explícita entre lo que exige la normativa (base legal proporcionada arriba) y lo que el documento efectivamente divulga. Máximo 3 frases.
+   - "justificacion_blanco": OBLIGATORIO si cumple="0" o cumple="NA". Describe con precisión qué dato, métrica o información específica falta en el documento para satisfacer la norma. Si cumple="1" o cumple="FE", déjalo como cadena vacía "".
+   - "ubicacion": Indica la página y sección donde se encontró (o debería encontrarse) la evidencia. Formato: "Página X - [Nombre de la sección]". Si no se localiza, pon "No localizado".
+
+══════════════════════════════════════════════
+REGLA ÉTICA INQUEBRANTABLE
+══════════════════════════════════════════════
+Si la información NO es explícita, clara e inequívoca en el documento, NO asumas cumplimiento.
+Marca "0" o "NA" y explica en "justificacion_blanco" exactamente qué dato o evidencia falta.
+NUNCA inventes, deduzcas, extrapoles ni supongas información que no esté presente LITERALMENTE en el documento.
+En caso de duda, el resultado SIEMPRE es "0" con justificación detallada."""
+
+
+def _evaluate_indicator(indicator: dict, gemini_file, legal_context: str) -> dict:
+    """Evalúa un indicador usando el PDF completo y el corpus legal pre-cacheado."""
+    try:
+        system_prompt = _build_system_prompt(indicator, legal_context)
 
         model = genai.GenerativeModel(
             model_name="gemini-2.5-pro",
@@ -84,41 +111,57 @@ def _evaluate_indicator(indicator: dict, gemini_file) -> dict:
         )
 
         response = model.generate_content(
-            [gemini_file, "Evalúa el indicador en base al documento proporcionado."]
+            [gemini_file, "Evalúa el indicador en base al documento proporcionado. Responde SOLO con el JSON especificado."]
         )
-        
+
         result_json = json.loads(response.text)
         result_json["indicator_id"] = indicator["id"]
+        result_json["indicator_ref"] = indicator["ref"]
         return result_json
-        
+
     except Exception as e:
         logger.error(f"Error evaluando indicador {indicator['id']}: {e}", exc_info=True)
         return {
             "indicator_id": indicator["id"],
+            "indicator_ref": indicator["ref"],
             "cumple": "ERROR",
             "evidencia_literal": "",
-            "pagina_real": "",
-            "razonamiento": f"Error interno en la evaluación: {str(e)}"
+            "analisis_tecnico": "",
+            "justificacion_blanco": f"Error interno en la evaluación: {str(e)}",
+            "ubicacion": ""
         }
 
+
 def run_empirical_audit_async(thread_id: str, file_path: str, uid: str):
-    """Ejecuta la auditoría subiendo el PDF a Gemini y evaluándolo."""
+    """Ejecuta la auditoría subiendo el PDF a Gemini y evaluándolo con caché legal."""
     doc_ref = firestore_db.collection("empirical_audits").document(thread_id)
-    
+
+    # 0. Cargar caché legal (reconstruye si expirada, lee de GCS si vigente)
+    legal_cache = get_legal_cache(INDICATORS)
+    cache_date = legal_cache.get("synced_at", "unknown")
+
+    # 1. Crear documento inicial en Firestore con meta_audit
     doc_ref.set({
         "uid": uid,
         "filename": os.path.basename(file_path),
         "status": "processing",
         "created_at": SERVER_TIMESTAMP,
+        "meta_audit": {
+            "legal_cache_date": cache_date,
+            "gemini_model": "gemini-2.5-pro",
+            "total_indicators": len(INDICATORS),
+            "version": "2.0"
+        },
         "results": {}
     }, merge=True)
-    
-    logger.info(f"Iniciando auditoría empírica para thread {thread_id}, file {file_path}")
-    
+
+    logger.info(f"Auditoría empírica v2 iniciada para thread {thread_id}, file {file_path}")
+    logger.info(f"Usando caché legal del: {cache_date}")
+
     gemini_file = None
     temp_dir = os.path.dirname(file_path)
     try:
-        # 1. Upload to Gemini (with retry for transient SSL/network errors)
+        # 2. Upload PDF a Gemini File API (una sola vez)
         max_upload_retries = 3
         for attempt in range(1, max_upload_retries + 1):
             try:
@@ -129,23 +172,28 @@ def run_empirical_audit_async(thread_id: str, file_path: str, uid: str):
                 logger.warning(f"Upload attempt {attempt} failed: {upload_exc}")
                 if attempt == max_upload_retries:
                     raise
-                time.sleep(3 * attempt)  # back-off: 3s, 6s
-        
-        # 2. Wait for processing
+                time.sleep(3 * attempt)
+
+        # 3. Esperar procesamiento del PDF por Gemini
         while gemini_file.state.name == "PROCESSING":
             logger.info("Waiting for file processing...")
             time.sleep(2)
             gemini_file = genai.get_file(gemini_file.name)
-            
+
         if gemini_file.state.name == "FAILED":
             raise Exception("Gemini file processing failed")
-            
+
         logger.info(f"File uploaded successfully. URI: {gemini_file.uri}")
 
-        # 3. Ejecutar evaluaciones concurrentemente (limitado a 5 workers para no saturar API)
+        # 4. Evaluar indicadores concurrentemente (5 workers)
+        #    El contexto legal se lee de la caché en RAM (sin llamadas a Pinecone)
         with ThreadPoolExecutor(max_workers=5) as executor:
-            future_to_ind = {executor.submit(_evaluate_indicator, ind, gemini_file): ind for ind in INDICATORS}
-            
+            future_to_ind = {}
+            for ind in INDICATORS:
+                ctx = get_indicator_context(legal_cache, ind["id"])
+                future = executor.submit(_evaluate_indicator, ind, gemini_file, ctx)
+                future_to_ind[future] = ind
+
             for future in as_completed(future_to_ind):
                 ind = future_to_ind[future]
                 try:
@@ -154,16 +202,19 @@ def run_empirical_audit_async(thread_id: str, file_path: str, uid: str):
                         f"results.{result['indicator_id']}": result,
                         "updated_at": SERVER_TIMESTAMP
                     })
-                    logger.info(f"Indicador {result['indicator_id']} evaluado para {thread_id}")
+                    logger.info(
+                        f"Indicador {result['indicator_id']} ({result.get('cumple', '?')}) "
+                        f"evaluado para {thread_id}"
+                    )
                 except Exception as e:
                     logger.error(f"Error procesando future de indicador {ind['id']}: {e}")
-                    
-        # Finalizar auditoría
+
+        # 5. Finalizar auditoría
         doc_ref.update({
             "status": "completed",
             "completed_at": SERVER_TIMESTAMP
         })
-        logger.info(f"Auditoría empírica finalizada para thread {thread_id}")
+        logger.info(f"Auditoría empírica v2 finalizada para thread {thread_id}")
 
     except Exception as e:
         logger.error(f"Failed to complete empirical audit: {e}", exc_info=True)
@@ -173,15 +224,13 @@ def run_empirical_audit_async(thread_id: str, file_path: str, uid: str):
             "updated_at": SERVER_TIMESTAMP
         })
     finally:
-        # 4. Clean up: eliminate the entire temp directory (avoids WinError 32 race condition
-        #    where Flask still holds the file handle when os.remove() is called)
+        # 6. Limpieza: eliminar directorio temporal y archivo de Gemini
         try:
             if os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir, ignore_errors=True)
                 logger.info(f"Deleted local temp dir {temp_dir}")
         except Exception as e:
             logger.warning(f"Could not delete temp dir {temp_dir}: {e}")
-        # Optional: Delete from Gemini to save space/quota
         if gemini_file:
             try:
                 genai.delete_file(gemini_file.name)
