@@ -132,6 +132,41 @@ def _iso_utc(ts):
 # 4) Endpoints del Módulo de Auditoría Empírica (NEIS S1)
 # =============================================================================
 
+@app.route("/api/audit/history", methods=["GET"])
+def get_audit_history():
+    """Retorna el historial de auditorías del usuario."""
+    decoded_user = require_firebase_user_or_403()
+    uid = decoded_user.get("uid")
+    try:
+        docs = firestore_db.collection("empirical_audits") \
+            .where("uid", "==", uid) \
+            .limit(50) \
+            .stream()
+        
+        audits = []
+        for doc in docs:
+            d = doc.to_dict()
+            # Calcular porcentaje de cumplimiento si están los resultados
+            resultados = d.get("resultados_granulares", {})
+            total = len(resultados)
+            cumplen = sum(1 for v in resultados.values() if v.get("cumple") == "SI")
+            porcentaje = round((cumplen / total) * 100, 1) if total > 0 else 0
+
+            audits.append({
+                "thread_id": doc.id,
+                "filename": d.get("filename", "Sin nombre"),
+                "status": d.get("status", "unknown"),
+                "created_at": _iso_utc(d.get("created_at")),
+                "score": porcentaje,
+                "total_indicadores": total
+            })
+        
+        audits.sort(key=lambda x: x['created_at'] or '', reverse=True)
+        return ok(audits)
+    except Exception as e:
+        logger.error(f"Error listando historial: {e}", exc_info=True)
+        return fail(f"Error al obtener historial: {str(e)}", status=500)
+
 @app.route("/api/audit/empirical", methods=["GET", "POST"])
 def handle_empirical_audit_root():
     """Maneja el listado (GET) y la creación (POST) de auditorías."""
