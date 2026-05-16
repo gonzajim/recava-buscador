@@ -1,44 +1,69 @@
-# recava-buscador
-ReCaVa Buscador - Arquitectura cloud multiagente para proceso auditoría.
+# Recava Auditor AI (V2.Final)
 
-Los usuarios pueden interactuar con el sistema de agentes de dos modos principales:
-a través de una interfaz web embebida (widget o iframe) en un sitio web
-o mediante llamadas directas a la API REST expuesta por Cloud Run.
-La capa de autenticación y control de acceso se gestiona con IAM de GCP (permiso Cloud Run Invoker para allUsers o grupos específicos) o con un API Gateway/IAP si se requiere seguridad adicional.
-Desde dispositivos móviles basta con cargar la misma interfaz web en un WebView o envolver peticiones al endpoint REST. Los desarrolladores integran el widget copiando un script de JavaScript que carga un iframe apuntando a un servidor estático (React/Vite/Tailwind) que sirva la UI de chat y, tras cada mensaje del usuario, el frontend envía la petición al Orquestador en Cloud Run, que invoca los Assistants de OpenAI y retorna la respuesta al cliente.
+**Observatorio IBEX 35 – Auditoría Automatizada de Sostenibilidad (NEIS S1 / CSRD)**
 
-1. interacción del usuario
-El usuario escribe en el chat widget incrustado en tu web o app móvil. El componente front-end simplemente envía un POST JSON al endpoint HTTPS de Cloud Run. Comunidad OpenAIGoogle Cloud
-2. orquestador en Cloud Run
-El contenedor serverless recibe la petición y ejecuta la lógica del Agents SDK:
-decide si delega en el Auditor o en el Asistente
+Recava Auditor es una plataforma avanzada diseñada para auditar informes de sostenibilidad de forma automatizada, rigurosa y escalable. Utiliza inteligencia artificial de última generación (Gemini 2.5 Pro) y una arquitectura RAG (Retrieval-Augmented Generation) optimizada para evaluar 37 indicadores clave del estándar NEIS S1.
 
+---
 
-pasa el contexto acumulado en el hilo
+## 🚀 Funcionalidades Principales
 
+- **Auditoría Senior Automatizada**: Análisis profundo de PDFs de sostenibilidad con criterios de auditoría senior.
+- **Smart Cache Normativo**: Sistema RAG de latencia cero que precarga el corpus legal en RAM.
+- **Historial de Auditorías**: Persistencia completa vinculada a Firebase Auth para consultar informes pasados sin re-procesar.
+- **Human-in-the-Loop**: Interfaz para validación humana de los hallazgos de la IA.
+- **Exportación CSV**: Descarga de resultados estructurados para informes externos.
 
-recibe la respuesta estructurada de la Responses API. GitHubopenai.github.io
+---
 
+## 🏗️ Arquitectura Técnica (V2.Final)
 
-Cloud Run se factura sólo por CPU-segundos y memoria usados, con free tier mensual para cargas bajas, por lo que el coste fijo es casi nulo. Google Cloud
-3. ejecución de agentes en OpenAI
-La API de Assistants (usada por el orquestador para invocar a los sub-agentes) enruta la solicitud al assistant adecuado:
-Assistant Sostenibilidad – RAG nativo para contestar dudas técnicas (asumido, la implementación depende de la configuración del Assistant `ASISTENTE_ID`). MediumComunidad OpenAI
+El sistema opera bajo un modelo de microservicios desplegado en Google Cloud Platform:
 
+- **Frontend**: React + Material UI (MUI).
+- **Backend**: Python Flask desplegado en **Cloud Run**.
+- **Base de Datos**: 
+  - **Firestore**: Almacena resultados, metadatos y configuración del sistema.
+  - **Pinecone**: Base vectorial para el corpus legal (utilizada para sincronización semanal).
+- **Almacenamiento**: **Google Cloud Storage** para alojar el cache normativo estático.
+- **IA**: **Gemini 2.5 Pro** vía Google AI Studio (File API para procesamiento de contexto largo).
 
-Assistant Auditoría – recorre la lista de preguntas y mantiene el estado del cuestionario (asumido, la implementación depende de la configuración del Assistant `AUDITOR_ID`).
+---
 
+## 🧠 Motor de Análisis y RAG
 
-Los dos assistants viven “hosted” en OpenAI.
-4. persistencia y trazabilidad
-Al cerrar cada iteración (o al terminar el workflow) el orquestador:
-compone la entrada “pregunta + respuesta” en un objeto JSON/Markdown,
+### Ciclo de Vida del Análisis
+1. **Upload**: El PDF se sube una única vez a la Gemini File API.
+2. **Smart Cache**: El sistema carga `normativa_cache.json` (sincronizado semanalmente desde Pinecone a GCS) directamente en la RAM del contenedor.
+3. **Paralelismo**: Se evalúan los 37 indicadores de forma concurrente, inyectando en cada petición los 20 fragmentos legales más relevantes para ese indicador específico.
+4. **Rigor de Salida**: Cada resultado incluye `cumple` (SI/NO/NA/FE), `evidencia_literal`, `pagina_real` y un `razonamiento` técnico con `ubicacion_contextual`.
 
+### Eficiencia de APIs
+| Recurso | Flujo V2.Final |
+| :--- | :--- |
+| **Pinecone** | **0 llamadas** por documento (uso de caché estática). |
+| **Gemini** | **1 upload** de PDF y 37 llamadas de inferencia paralelas. |
 
-la guarda en Cloud Storage o Firestore para consulta y auditoría (Nota: esta funcionalidad no está implementada en el `main.py` actual pero está descrita como parte de la arquitectura). Google CloudGoogle Cloud
+---
 
+## 🛠️ Configuración y Despliegue
 
-5. respuesta al front-end
-La respuesta estructurada vuelve al front-end, que la muestra en la ventana de chat. Para integraciones de terceros, el mismo endpoint de Cloud Run (`/orchestrate`) funciona como API REST autenticada mediante IAM o IAP. Google CloudStack Overflow
+### Requisitos Previos
+- Cuenta en Google Cloud con Cloud Run y Cloud Storage habilitados.
+- Instancia de Pinecone con el corpus legal vectorizado.
+- API Key de Gemini.
+- Proyecto Firebase configurado para autenticación y Firestore.
 
-El endpoint `/health` también está disponible para comprobaciones de estado del servicio.
+### Variables de Entorno (`env.yaml`)
+El sistema requiere las siguientes claves para operar en producción:
+- `GEMINI_API_KEY`: Clave para el modelo 2.5 Pro.
+- `PINECONE_API_KEY`: Acceso a la base vectorial.
+- `LEGAL_CACHE_BUCKET`: Nombre del bucket GCS para el Smart Cache.
+
+---
+
+## 📂 Estructura del Proyecto
+- `/public/admin-panel`: Frontend en React.
+- `/src`: Lógica del backend (servicios de auditoría, caché legal y vectores).
+- `app.py`: Servidor Flask y endpoints de la API.
+- `normativa_cache.json`: (Generado automáticamente) Cache local del corpus experto.
