@@ -201,7 +201,10 @@ export default function EmpiricalAuditViewer() {
         body: formData,
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || 'Error al subir la matriz');
+      if (!response.ok) {
+        const errorMsg = body.error?.message || (typeof body.error === 'string' ? body.error : 'Error al subir la matriz');
+        throw new Error(errorMsg);
+      }
       
       await fetchIndicators();
       setIndicatorsFile(null);
