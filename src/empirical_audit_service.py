@@ -21,7 +21,8 @@ import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.cloud.firestore_v1 import SERVER_TIMESTAMP
 from src.config import logger, firestore_db
-from src.legal_cache_service import get_legal_cache, sync_legal_cache, needs_sync
+from src.legal_cache_service import get_legal_cache, sync_legal_cache, sync_legal_cache_for_user, needs_sync
+from src.indicator_service import get_indicators
 import google.generativeai as genai
 
 # ── Lista de indicadores ─────────────────────────────────────────────────────
@@ -197,29 +198,46 @@ def run_empirical_audit_async(thread_id: str, file_path: str, uid: str):
     except Exception:
         doc_hash = "unknown"
 
+    # Cargar indicadores dinámicos del usuario (custom o 37 base)
+    indicators = get_indicators(uid)
+
     doc_ref.set({
         "uid":             uid,
         "filename":        os.path.basename(file_path),
         "hash_documento":  doc_hash,
         "status":          "processing",
         "created_at":      SERVER_TIMESTAMP,
+        "total_indicadores": len(indicators),
+        # Snapshot inmutable de los indicadores usados (integridad histórica)
+        "indicadores_utilizados_snapshot": indicators,
         "results":         {}
     }, merge=True)
 
-    logger.info(f"[audit] Iniciando auditoría V2.Final — thread={thread_id}, hash={doc_hash}")
+    logger.info(f"[audit] Iniciando auditoría V3.1 — thread={thread_id}, hash={doc_hash}, indicadores={len(indicators)}")
 
     gemini_file = None
     temp_dir = os.path.dirname(file_path)
 
     try:
-        # ── 1. Verificar y sincronizar Smart Cache ───────────────────────────
-        if needs_sync():
-            logger.info("[audit] Corpus normativo desactualizado. Sincronizando con Pinecone...")
-            doc_ref.update({"status_detail": "syncing_legal_cache"})
-            legal_cache = sync_legal_cache()
+        # ── 1. Verificar y sincronizar Smart Cache (global o por usuario) ────
+        has_custom_indicators = uid is not None
+
+        if has_custom_indicators:
+            # Intentar cargar caché personalizada del usuario
+            legal_cache = get_legal_cache(uid=uid)
+            if not legal_cache:
+                # Sin caché personalizada → generar una ahora
+                logger.info(f"[audit] Sin caché para usuario {uid}. Generando...")
+                doc_ref.update({"status_detail": "syncing_legal_cache"})
+                legal_cache = sync_legal_cache_for_user(uid=uid, indicators=indicators)
         else:
-            logger.info("[audit] Cargando corpus normativo desde GCS...")
-            legal_cache = get_legal_cache()
+            if needs_sync():
+                logger.info("[audit] Corpus normativo global desactualizado. Sincronizando...")
+                doc_ref.update({"status_detail": "syncing_legal_cache"})
+                legal_cache = sync_legal_cache()
+            else:
+                logger.info("[audit] Cargando corpus normativo global desde GCS...")
+                legal_cache = get_legal_cache()
 
         # ── 2. Subir PDF a Gemini File API (única vez) ───────────────────────
         max_upload_retries = 3
@@ -246,11 +264,11 @@ def run_empirical_audit_async(thread_id: str, file_path: str, uid: str):
         logger.info(f"[audit] PDF subido. URI: {gemini_file.uri}")
         doc_ref.update({"status_detail": "evaluating_indicators"})
 
-        # ── 3. Evaluación concurrente de los 37 indicadores ──────────────────
+        # ── 3. Evaluación concurrente de los N indicadores ───────────────────
         with ThreadPoolExecutor(max_workers=5) as executor:
             future_to_ind = {
                 executor.submit(_evaluate_indicator, ind, gemini_file, legal_cache): ind
-                for ind in INDICATORS
+                for ind in indicators
             }
 
             for future in as_completed(future_to_ind):
@@ -267,18 +285,18 @@ def run_empirical_audit_async(thread_id: str, file_path: str, uid: str):
 
         # ── 4. Marcar como completado ─────────────────────────────────────────
         doc_ref.update({
-            "status":       "completed",
+            "status":        "completed",
             "status_detail": "done",
-            "completed_at": SERVER_TIMESTAMP
+            "completed_at":  SERVER_TIMESTAMP
         })
         logger.info(f"[audit] Auditoría finalizada — thread={thread_id}")
 
     except Exception as e:
         logger.error(f"[audit] Fallo en auditoría {thread_id}: {e}", exc_info=True)
         doc_ref.update({
-            "status":       "error",
+            "status":        "error",
             "status_detail": str(e),
-            "updated_at":   SERVER_TIMESTAMP
+            "updated_at":    SERVER_TIMESTAMP
         })
     finally:
         # Limpiar directorio temporal

@@ -11,7 +11,8 @@ from src.config import app, logger, firestore_db
 
 # --- Gemini y Módulo Empírico ---
 from src.empirical_audit_service import run_empirical_audit_async
-from src.legal_cache_service import sync_legal_cache, needs_sync
+from src.legal_cache_service import sync_legal_cache, needs_sync, check_and_warm_cache
+from src.indicator_service import parse_excel, save_indicators, get_indicators
 import threading
 import tempfile
 import werkzeug.utils
@@ -101,6 +102,15 @@ def require_firebase_user_or_403():
     id_token = auth_header.split(" ", 1)[1]
     try:
         decoded = fb_auth.verify_id_token(id_token)
+        # Background warm-up: comprobar y regenerar caché si es necesario
+        # Se lanza en un hilo secundario sin bloquear la respuesta HTTP
+        uid = decoded.get("uid")
+        if uid:
+            threading.Thread(
+                target=check_and_warm_cache,
+                args=(uid,),
+                daemon=True
+            ).start()
         return decoded
     except Exception as e:
         logger.warning(f"Auth: token inválido: {e}")
@@ -213,6 +223,73 @@ def trigger_sync_legal_cache():
         return ok({"message": "Sincronización iniciada en background.", "was_stale": stale}), 202
     except Exception as e:
         return fail(f"Error al iniciar sincronización: {str(e)}", status=500)
+
+
+# =============================================================================
+# 6) Gestión de Indicadores Dinámicos (V3.1)
+# =============================================================================
+
+@app.route("/api/indicators", methods=["GET"])
+def get_user_indicators():
+    """Devuelve la lista de indicadores activos del usuario (custom o los 37 base)."""
+    decoded_user = require_firebase_user_or_403()
+    uid = decoded_user.get("uid")
+    try:
+        indicators = get_indicators(uid)
+        return ok({
+            "indicators": indicators,
+            "total":      len(indicators),
+            "is_custom":  len(indicators) != 37  # heurístico simple
+        })
+    except Exception as e:
+        logger.error(f"Error cargando indicadores para {uid}: {e}")
+        return fail(f"Error al cargar indicadores: {str(e)}", status=500)
+
+
+@app.route("/api/indicators/upload", methods=["POST"])
+def upload_indicators():
+    """
+    Permite al usuario subir un archivo Excel (.xlsx) o CSV con una matriz
+    personalizada de indicadores que sobrescribe los 37 base.
+
+    Columnas obligatorias: NEIS, Epígrafe, Indicador
+    """
+    decoded_user = require_firebase_user_or_403()
+    uid = decoded_user.get("uid")
+
+    if 'file' not in request.files:
+        return fail("No se encontró ningún archivo en la petición", status=400)
+
+    file = request.files['file']
+    if file.filename == '':
+        return fail("Archivo vacío", status=400)
+
+    filename = file.filename.lower()
+    allowed_mimes = (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel",
+        "text/csv",
+        "application/csv"
+    )
+    if not (filename.endswith(".xlsx") or filename.endswith(".csv")):
+        return fail("Formato no admitido. Usa .xlsx o .csv", status=400)
+
+    try:
+        indicators = parse_excel(file.stream, file.filename)
+    except ValueError as e:
+        return fail(str(e), status=400)
+    except Exception as e:
+        logger.error(f"Error parseando Excel de indicadores: {e}", exc_info=True)
+        return fail("Error al procesar el archivo", status=500)
+
+    # Persistir en Firestore y disparar regeneración de caché en background
+    save_indicators(uid, indicators)
+
+    return ok({
+        "message":     f"{len(indicators)} indicadores cargados y caché en regeneración.",
+        "total":       len(indicators),
+        "indicators":  indicators
+    }), 202
 
 
 @app.route("/health", methods=["GET"])

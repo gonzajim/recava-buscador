@@ -21,6 +21,7 @@ from src.vector_service import hybrid_search_engine_cached
 # ── Constantes ──────────────────────────────────────────────────────────────
 CACHE_BUCKET  = os.getenv("LEGAL_CACHE_BUCKET", "recava-buscador-legal-cache")
 CACHE_BLOB    = "normativa_cache.json"
+USER_CACHE_BLOB_TEMPLATE = "normativa_cache_{uid}.json"  # Por-usuario
 SYNC_CONFIG_DOC = ("system", "config")   # Firestore: collection / document
 SYNC_INTERVAL_DAYS = 7
 TOP_K_CHUNKS  = 20
@@ -74,23 +75,23 @@ def _get_gcs_client():
     return storage.Client()
 
 
-def _upload_to_gcs(data: dict) -> None:
+def _upload_to_gcs(data: dict, blob_name: str = CACHE_BLOB) -> None:
     """Serializa el dict como JSON y lo sube al bucket."""
     client = _get_gcs_client()
     bucket = client.bucket(CACHE_BUCKET)
-    blob   = bucket.blob(CACHE_BLOB)
+    blob   = bucket.blob(blob_name)
     blob.upload_from_string(
         json.dumps(data, ensure_ascii=False, indent=2),
         content_type="application/json"
     )
-    logger.info(f"[legal_cache] normativa_cache.json subido a gs://{CACHE_BUCKET}/{CACHE_BLOB}")
+    logger.info(f"[legal_cache] {blob_name} subido a gs://{CACHE_BUCKET}/{blob_name}")
 
 
-def _download_from_gcs() -> dict:
+def _download_from_gcs(blob_name: str = CACHE_BLOB) -> dict:
     """Descarga y parsea el JSON de GCS."""
     client = _get_gcs_client()
     bucket = client.bucket(CACHE_BUCKET)
-    blob   = bucket.blob(CACHE_BLOB)
+    blob   = bucket.blob(blob_name)
     content = blob.download_as_text(encoding="utf-8")
     return json.loads(content)
 
@@ -172,16 +173,115 @@ def sync_legal_cache() -> dict:
     return cache
 
 
-def get_legal_cache() -> dict:
+def sync_legal_cache_for_user(uid: str, indicators: list) -> dict:
     """
-    Descarga normativa_cache.json desde GCS y lo devuelve como dict.
-    Si no existe o falla, retorna un dict vacío (el sistema sigue funcionando
-    sin cache, aunque con menos rigor).
+    Rebuild de la caché normativa para un usuario específico con
+    sus propios indicadores. Genera normativa_cache_[UID].json en GCS.
+    """
+    blob_name = USER_CACHE_BLOB_TEMPLATE.format(uid=uid)
+    logger.info(f"[legal_cache] Iniciando sync caché para usuario {uid} ({len(indicators)} indicadores)...")
+
+    indicators_data = {}
+    for ind in indicators:
+        query = f"{ind.get('ref', '')} {ind.get('question', '')}"
+        try:
+            raw_context = hybrid_search_engine_cached(query, TOP_K_CHUNKS)
+            chunks = [c.strip() for c in raw_context.split("\n\n") if c.strip()]
+        except Exception as e:
+            logger.warning(f"[legal_cache] Error chunks para ind {ind.get('id','?')} (user {uid}): {e}")
+            chunks = []
+
+        indicators_data[ind["id"]] = {
+            "ref":      ind.get("ref", ""),
+            "question": ind.get("question", ""),
+            "chunks":   chunks
+        }
+
+    cache = {
+        "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "uid":          uid,
+        "indicators":   indicators_data
+    }
+
+    _upload_to_gcs(cache, blob_name=blob_name)
+
+    # Marcar timestamp en Firestore del usuario
+    try:
+        from google.cloud.firestore_v1 import SERVER_TIMESTAMP
+        firestore_db.collection("usuarios_config").document(uid).set(
+            {"last_rag_sync": SERVER_TIMESTAMP}, merge=True
+        )
+    except Exception as e:
+        logger.warning(f"[legal_cache] No se pudo actualizar last_rag_sync de usuario {uid}: {e}")
+
+    logger.info(f"[legal_cache] Caché de usuario {uid} generada en {blob_name}.")
+    return cache
+
+
+def check_and_warm_cache(uid: str) -> None:
+    """
+    Función de Background Warm-up ejecutada al login del usuario.
+    Comprueba si la caché del usuario está vigente (<7 días) y,
+    si no, la regenera en background sin bloquear la sesión del usuario.
     """
     try:
+        # Determinar si el usuario tiene indicadores personalizados
+        user_doc = firestore_db.collection("usuarios_config").document(uid).get()
+        has_custom = False
+        user_indicators = None
+
+        if user_doc.exists:
+            data = user_doc.to_dict()
+            custom = data.get("indicadores_activos", [])
+            if custom:
+                has_custom = True
+                user_indicators = custom
+
+                # Comprobar si la caché personalizada está vigente
+                last_sync = data.get("last_rag_sync")
+                if last_sync:
+                    if last_sync.tzinfo is None:
+                        last_sync = last_sync.replace(tzinfo=datetime.timezone.utc)
+                    age = datetime.datetime.now(datetime.timezone.utc) - last_sync
+                    if age.days < SYNC_INTERVAL_DAYS:
+                        logger.info(f"[warm_up] Caché de usuario {uid} vigente ({age.days}d). Sin acción.")
+                        return
+
+                logger.info(f"[warm_up] Regenerando caché personalizada para {uid}...")
+                sync_legal_cache_for_user(uid=uid, indicators=user_indicators)
+                return
+
+        # Usuario sin indicadores personalizados → verificar caché global
+        if needs_sync():
+            logger.info(f"[warm_up] Caché global expirada. Regenerando para usuario {uid}...")
+            sync_legal_cache()
+        else:
+            logger.info(f"[warm_up] Caché global vigente. Sin acción para {uid}.")
+
+    except Exception as e:
+        logger.error(f"[warm_up] Error en background warm-up para {uid}: {e}")
+
+
+def get_legal_cache(uid: str = None) -> dict:
+    """
+    Descarga normativa_cache.json (global o por usuario) desde GCS.
+    Si no existe o falla, retorna un dict vacío.
+    """
+    # Si el usuario tiene caché personalizada, intentarla primero
+    if uid:
+        blob_name = USER_CACHE_BLOB_TEMPLATE.format(uid=uid)
+        try:
+            cache = _download_from_gcs(blob_name=blob_name)
+            logger.info(f"[legal_cache] Caché de usuario {uid} cargada (generada: {cache.get('generated_at', '?')})")
+            return cache
+        except Exception:
+            logger.info(f"[legal_cache] Sin caché personalizada para {uid}. Usando global.")
+
+    # Caché global por defecto
+    try:
         cache = _download_from_gcs()
-        logger.info(f"[legal_cache] Cache cargado desde GCS (generado: {cache.get('generated_at', '?')})")
+        logger.info(f"[legal_cache] Caché global cargada (generada: {cache.get('generated_at', '?')})")
         return cache
     except Exception as e:
-        logger.warning(f"[legal_cache] No se pudo cargar cache desde GCS: {e}. Se procederá sin caché.")
+        logger.warning(f"[legal_cache] No se pudo cargar cache desde GCS: {e}. Sin caché.")
         return {}
