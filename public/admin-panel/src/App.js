@@ -4,6 +4,7 @@ import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth } from './firebase';
 import Auth from './Auth';
 import EmpiricalAuditViewer from './EmpiricalAuditViewer';
+import Landing from './Landing';
 
 // --- NUEVAS IMPORTACIONES PARA EL TEMA ---
 import { ThemeProvider } from '@mui/material/styles';
@@ -14,6 +15,7 @@ import { AppBar, Toolbar, Typography, Button, Box, Paper } from '@mui/material';
 function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [showAuth, setShowAuth] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -50,12 +52,14 @@ function App() {
         <main>
           {user ? (
             <EmpiricalAuditViewer />
-          ) : (
+          ) : showAuth ? (
             <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '80vh' }}>
               <Paper elevation={3} sx={{ padding: 4 }}>
                 <Auth />
               </Paper>
             </Box>
+          ) : (
+            <Landing onLoginClick={() => setShowAuth(true)} />
           )}
         </main>
       </Box>
