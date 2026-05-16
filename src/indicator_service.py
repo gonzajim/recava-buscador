@@ -65,13 +65,21 @@ def parse_excel(file_stream, filename: str) -> list:
     """
     Parsea un archivo Excel (.xlsx) o CSV y devuelve una lista de indicadores.
     Lanza ValueError si el archivo no tiene la estructura requerida.
+
+    NOTA: Flask entrega SpooledTemporaryFile que no es seekable en todas las versiones.
+    Leemos el contenido en BytesIO antes de pasarlo a pandas para garantizar compatibilidad.
     """
+    import io
     try:
+        # Materializar el stream en memoria para garantizar seekability
+        raw = file_stream.read()
+        buf = io.BytesIO(raw)
+
         fname = filename.lower()
         if fname.endswith(".csv"):
-            df = pd.read_csv(file_stream, dtype=str)
+            df = pd.read_csv(buf, dtype=str)
         else:
-            df = pd.read_excel(file_stream, dtype=str)
+            df = pd.read_excel(buf, dtype=str)
     except Exception as e:
         raise ValueError(f"No se pudo leer el archivo: {e}")
 

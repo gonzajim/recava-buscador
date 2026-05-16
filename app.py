@@ -76,6 +76,24 @@ def fail(message, status=400, **details):
 
 
 @app.before_request
+def _handle_options_preflight():
+    """Responde a las peticiones OPTIONS (CORS preflight) antes de que lleguen a los endpoints.
+    Esto evita que require_firebase_user_or_403() aborte con 401 antes de que Flask-CORS
+    pueda inyectar las cabeceras Access-Control-Allow-* en la respuesta preflight.
+    """
+    if request.method == 'OPTIONS':
+        from flask import make_response
+        origin = request.headers.get('Origin', '*')
+        resp = make_response('', 204)
+        resp.headers['Access-Control-Allow-Origin'] = origin
+        resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, PATCH, OPTIONS'
+        resp.headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type, Idempotency-Key'
+        resp.headers['Access-Control-Allow-Credentials'] = 'true'
+        resp.headers['Access-Control-Max-Age'] = '86400'
+        return resp
+
+
+@app.before_request
 def _req_start():
     request._id = uuid.uuid4().hex[:12]
     request._t0 = time.time()
@@ -132,7 +150,7 @@ def _iso_utc(ts):
 # 4) Endpoints del Módulo de Auditoría Empírica (NEIS S1)
 # =============================================================================
 
-@app.route("/api/audit/history", methods=["GET"])
+@app.route("/api/audit/history", methods=["GET", "OPTIONS"])
 def get_audit_history():
     """Retorna el historial de auditorías del usuario."""
     decoded_user = require_firebase_user_or_403()
@@ -147,9 +165,9 @@ def get_audit_history():
         for doc in docs:
             d = doc.to_dict()
             # Calcular porcentaje de cumplimiento si están los resultados
-            resultados = d.get("resultados_granulares", {})
-            total = len(resultados)
-            cumplen = sum(1 for v in resultados.values() if v.get("cumple") == "SI")
+            resultados = d.get("results", {})
+            total = len(resultados) if isinstance(resultados, dict) else 0
+            cumplen = sum(1 for v in (resultados.values() if isinstance(resultados, dict) else []) if v.get("cumple") in ["SI", "SÍ", "Sí", "Si"])
             porcentaje = round((cumplen / total) * 100, 1) if total > 0 else 0
 
             audits.append({
@@ -264,7 +282,7 @@ def trigger_sync_legal_cache():
 # 6) Gestión de Indicadores Dinámicos (V3.1)
 # =============================================================================
 
-@app.route("/api/indicators", methods=["GET"])
+@app.route("/api/indicators", methods=["GET", "OPTIONS"])
 def get_user_indicators():
     """Devuelve la lista de indicadores activos del usuario (custom o los 37 base)."""
     decoded_user = require_firebase_user_or_403()
@@ -281,7 +299,7 @@ def get_user_indicators():
         return fail(f"Error al cargar indicadores: {str(e)}", status=500)
 
 
-@app.route("/api/indicators/upload", methods=["POST"])
+@app.route("/api/indicators/upload", methods=["POST", "OPTIONS"])
 def upload_indicators():
     """
     Permite al usuario subir un archivo Excel (.xlsx) o CSV con una matriz
