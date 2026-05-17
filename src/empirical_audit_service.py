@@ -70,8 +70,25 @@ INDICATORS = [
 def _build_system_prompt(indicator: dict, chunks: list) -> str:
     """
     Construye el system_instruction de Auditor Senior con los 20 chunks de la caché.
+    V3.4: Inyecta search_rules como directiva específica del auditor si está definida.
     """
     chunks_text = "\n\n---\n\n".join(chunks) if chunks else "No hay contexto normativo disponible en caché."
+    search_rules = indicator.get("search_rules", "").strip()
+
+    search_rules_block = ""
+    if search_rules:
+        search_rules_block = f"""
+══════════════════════════════════════════════════════════════
+⚠️  DIRECTIVAS ESPECÍFICAS DEL AUDITOR — PRIORIDAD MÁXIMA:
+══════════════════════════════════════════════════════════════
+{search_rules}
+
+INSTRUCCIÓN CRÍTICA: Para marcar "SI", la evidencia literal del documento debe
+satisfacer el INDICADOR A EVALUAR y CUMPLIR ESTAS DIRECTIVAS. Si el documento tiene
+información genérica que no satisface estas directivas específicas, debes marcar "NO"
+o "NA" y justificarlo explícitamente en 'justificacion_vacios'.
+══════════════════════════════════════════════════════════════
+"""
 
     return f"""Eres un Auditor Senior de Sostenibilidad especializado en estándares CSRD/ESRS.
 Tu misión es evaluar si el documento PDF cumple con el siguiente indicador con rigor técnico y legal absoluto.
@@ -81,7 +98,7 @@ INDICADOR A EVALUAR:
   Referencia: {indicator['ref']}
   Pregunta:   {indicator['question']}
 ══════════════════════════════════════════════════════════════
-
+{search_rules_block}
 BASE LEGAL — CORPUS NORMATIVO (top-20 fragmentos del estándar oficial):
 {chunks_text}
 

@@ -76,6 +76,73 @@ function EvidenciaChip({ value }) {
   return <Chip label={cfg.label} color={cfg.color} size="small" sx={{ fontWeight: 'bold' }} />;
 }
 
+// ── EditableCell: celda de tabla editable inline (doble clic para editar) ────
+function EditableCell({ value, onCommit, monospace, wide, placeholder, highlight }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const inputRef = useRef(null);
+
+  useEffect(() => { setDraft(value); }, [value]);
+
+  const startEdit = () => { setEditing(true); setTimeout(() => inputRef.current?.focus(), 50); };
+  const commit = () => {
+    setEditing(false);
+    if (draft !== value) onCommit(draft);
+  };
+  const onKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commit(); }
+    if (e.key === 'Escape') { setDraft(value); setEditing(false); }
+  };
+
+  return (
+    <TableCell
+      onDoubleClick={startEdit}
+      sx={{
+        cursor: 'text',
+        maxWidth: wide ? 300 : (monospace ? 130 : 220),
+        minWidth: 90,
+        whiteSpace: 'normal',
+        p: editing ? 0.5 : 1,
+        bgcolor: highlight ? 'secondary.50' : 'transparent',
+        transition: 'background 0.2s',
+        '&:hover': { bgcolor: editing ? undefined : 'action.hover' },
+      }}
+    >
+      {editing ? (
+        <textarea
+          ref={inputRef}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={onKeyDown}
+          rows={3}
+          style={{
+            width: '100%', border: '2px solid #1976d2', borderRadius: 4,
+            padding: '4px 6px', fontSize: '0.82rem', resize: 'vertical',
+            fontFamily: monospace ? 'monospace' : 'inherit',
+            outline: 'none', boxSizing: 'border-box',
+          }}
+        />
+      ) : (
+        <Tooltip title="Doble clic para editar" placement="top" arrow>
+          <Typography
+            variant="body2"
+            sx={{
+              fontSize: '0.82rem',
+              fontFamily: monospace ? 'monospace' : 'inherit',
+              fontWeight: monospace ? 'bold' : 'normal',
+              color: draft ? (highlight ? 'secondary.dark' : 'text.primary') : 'text.disabled',
+              fontStyle: draft ? 'normal' : 'italic',
+            }}
+          >
+            {draft || placeholder || '—'}
+          </Typography>
+        </Tooltip>
+      )}
+    </TableCell>
+  );
+}
+
 // ── Componente principal ─────────────────────────────────────────────────────
 export default function EmpiricalAuditViewer() {
   const [file, setFile] = useState(null);
@@ -94,6 +161,12 @@ export default function EmpiricalAuditViewer() {
   const [loadingIndicators, setLoadingIndicators] = useState(false);
   const [uploadingIndicators, setUploadingIndicators] = useState(false);
   const [isCacheSyncing, setIsCacheSyncing] = useState(false);
+
+  // V3.4 — Inline editing state
+  const [editedIndicators, setEditedIndicators] = useState([]);
+  const [isDirty, setIsDirty] = useState(false);
+  const [savingIndicators, setSavingIndicators] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
   
   const pollRef = useRef(null);
 
@@ -125,6 +198,8 @@ export default function EmpiricalAuditViewer() {
       const body = await resp.json();
       if (body.ok && body.data && body.data.indicators) {
         setIndicators(body.data.indicators);
+        setEditedIndicators(body.data.indicators.map(ind => ({ ...ind, search_rules: ind.search_rules || '' })));
+        setIsDirty(false);
         const map = {};
         body.data.indicators.forEach(ind => { map[ind.id] = ind; });
         setIndicatorsMap(map);
@@ -219,16 +294,51 @@ export default function EmpiricalAuditViewer() {
         const errorMsg = body.error?.message || (typeof body.error === 'string' ? body.error : 'Error al subir la matriz');
         throw new Error(errorMsg);
       }
-      
       await fetchIndicators();
       setIndicatorsFile(null);
-      setTimeout(() => setIsCacheSyncing(false), 5000); 
+      setSaveSuccess(true);
+      setTimeout(() => { setIsCacheSyncing(false); setSaveSuccess(false); }, 6000);
     } catch (err) {
       console.error(err); setError(err.message);
       setIsCacheSyncing(false);
     } finally {
       setUploadingIndicators(false);
     }
+  };
+
+  const handleSaveIndicators = async () => {
+    if (!isDirty) return;
+    setError(''); setSavingIndicators(true); setIsCacheSyncing(true);
+    try {
+      const auth = getAuth();
+      if (!auth.currentUser) throw new Error('Usuario no autenticado.');
+      const token = await auth.currentUser.getIdToken();
+      const response = await fetch(`${API_URL}/api/indicators/save`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ indicators: editedIndicators }),
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        const errorMsg = body.error?.message || 'Error al guardar los indicadores';
+        throw new Error(errorMsg);
+      }
+      await fetchIndicators();
+      setSaveSuccess(true);
+      setTimeout(() => { setIsCacheSyncing(false); setSaveSuccess(false); }, 6000);
+    } catch (err) {
+      console.error(err); setError(err.message);
+      setIsCacheSyncing(false);
+    } finally {
+      setSavingIndicators(false);
+    }
+  };
+
+  const handleCellEdit = (id, field, value) => {
+    setEditedIndicators(prev =>
+      prev.map(ind => ind.id === id ? { ...ind, [field]: value } : ind)
+    );
+    setIsDirty(true);
   };
 
   const handleFeedbackToggle = async (indicatorId, currentValue) => {
@@ -360,49 +470,81 @@ export default function EmpiricalAuditViewer() {
           {/* ── PESTAÑA 2: Configurar Indicadores ── */}
           {tabValue === 2 && (
             <Box>
-              <Typography variant="h6" gutterBottom fontWeight="bold">Matriz de Búsqueda Personalizada</Typography>
-              <Typography variant="body2" color="text.secondary" mb={3}>
-                Defina qué indicadores desea buscar. Cargue un Excel/CSV con las columnas: <strong>NEIS, Epígrafe e Indicador</strong>.
-              </Typography>
-              
-              <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mb: 4 }}>
-                <Button variant="outlined" component="label" sx={{ height: 56, flexGrow: 1, borderRadius: 2, borderStyle: 'dashed', borderWidth: 2 }} startIcon={<CloudUploadIcon />}>
-                  {indicatorsFile ? indicatorsFile.name : 'Cargar Nueva Matriz de Indicadores'}
-                  <input type="file" hidden accept=".xlsx,.csv" onChange={(e) => setIndicatorsFile(e.target.files[0])} />
-                </Button>
-                <Button 
-                  variant="contained" 
-                  color="secondary"
-                  onClick={handleUploadIndicators} 
-                  disabled={uploadingIndicators || !indicatorsFile} 
-                  sx={{ height: 56, px: 4, borderRadius: 2, fontWeight: 'bold' }}
-                >
-                  {uploadingIndicators ? <CircularProgress size={24} color="inherit" /> : 'Actualizar Matriz'}
-                </Button>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2, flexWrap: 'wrap', gap: 2 }}>
+                <Box>
+                  <Typography variant="h6" fontWeight="bold">Matriz de Búsqueda Personalizada</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Edita cualquier celda directo en pantalla o carga un Excel/CSV con columnas: <strong>NEIS, Epígrafe, Indicador, Reglas búsqueda</strong> (opcional).
+                  </Typography>
+                </Box>
+                <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexShrink: 0 }}>
+                  <Button variant="outlined" component="label" sx={{ height: 48, borderRadius: 2, borderStyle: 'dashed', borderWidth: 2, whiteSpace: 'nowrap' }} startIcon={<CloudUploadIcon />}>
+                    {indicatorsFile ? indicatorsFile.name.slice(0,20) + '...' : 'Cargar Excel/CSV'}
+                    <input type="file" hidden accept=".xlsx,.csv" onChange={(e) => setIndicatorsFile(e.target.files[0])} />
+                  </Button>
+                  {indicatorsFile && (
+                    <Button variant="contained" color="secondary" onClick={handleUploadIndicators}
+                      disabled={uploadingIndicators} sx={{ height: 48, px: 3, borderRadius: 2, fontWeight: 'bold' }}>
+                      {uploadingIndicators ? <CircularProgress size={20} color="inherit" /> : 'Subir'}
+                    </Button>
+                  )}
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    onClick={handleSaveIndicators}
+                    disabled={!isDirty || savingIndicators}
+                    sx={{ height: 48, px: 3, borderRadius: 2, fontWeight: 'bold',
+                      bgcolor: isDirty ? 'primary.main' : 'grey.400',
+                      '&:hover': { bgcolor: isDirty ? 'primary.dark' : 'grey.400' }
+                    }}
+                  >
+                    {savingIndicators ? <CircularProgress size={20} color="inherit" /> : 'Guardar Cambios'}
+                  </Button>
+                </Box>
               </Box>
-              {error && <Typography color="error" sx={{ mt: 2, mb: 2 }}>{error}</Typography>}
 
-              <Divider sx={{ mb: 3 }} />
+              {error && <Alert severity="error" sx={{ mb: 2, borderRadius: 2 }}>{error}</Alert>}
+              {saveSuccess && <Alert severity="success" sx={{ mb: 2, borderRadius: 2 }}>✓ Indicadores guardados. Sincronizando base legal en segundo plano…</Alert>}
+              {isCacheSyncing && !saveSuccess && <Alert severity="info" sx={{ mb: 2, borderRadius: 2 }}>Sincronizando base normativa (RAG)… La pestaña de análisis estará disponible en breve.</Alert>}
+              {isDirty && <Alert severity="warning" sx={{ mb: 2, borderRadius: 2 }}>Tienes cambios sin guardar. Pulsa "Guardar Cambios" para aplicarlos.</Alert>}
 
-              <Typography variant="h6" gutterBottom>Indicadores Activos ({indicators.length})</Typography>
+              <Typography variant="subtitle2" gutterBottom sx={{ mt: 1, color: 'text.secondary' }}>
+                {editedIndicators.length} indicadores activos — Haz doble clic en cualquier celda para editarla
+              </Typography>
+
               {loadingIndicators ? (
-                 <CircularProgress size={24} />
+                <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}><CircularProgress /></Box>
               ) : (
-                <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: 400, borderRadius: 2 }}>
+                <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: 520, borderRadius: 2 }}>
                   <Table size="small" stickyHeader>
                     <TableHead>
                       <TableRow>
-                        <TableCell width={50}><strong>ID</strong></TableCell>
-                        <TableCell width={150}><strong>Referencia</strong></TableCell>
-                        <TableCell><strong>Indicador / Pregunta de Búsqueda</strong></TableCell>
+                        <TableCell width={44} sx={{ fontWeight: 'bold' }}>#</TableCell>
+                        <TableCell width={130} sx={{ fontWeight: 'bold' }}>Referencia (NEIS)</TableCell>
+                        <TableCell sx={{ fontWeight: 'bold' }}>Indicador / Pregunta LLM</TableCell>
+                        <TableCell sx={{ fontWeight: 'bold', color: 'secondary.main' }}>Reglas búsqueda ⚡</TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {indicators.map((ind) => (
-                        <TableRow key={ind.id} hover>
-                          <TableCell>{ind.id}</TableCell>
-                          <TableCell><Typography variant="caption" sx={{ fontFamily: 'monospace', fontWeight: 'bold' }}>{ind.ref}</Typography></TableCell>
-                          <TableCell><Typography variant="body2">{ind.question}</Typography></TableCell>
+                      {editedIndicators.map((ind) => (
+                        <TableRow key={ind.id} hover sx={{ '&:hover': { bgcolor: 'action.hover' } }}>
+                          <TableCell sx={{ color: 'text.disabled', fontSize: '0.8rem' }}>{ind.id}</TableCell>
+                          <EditableCell
+                            value={ind.ref || ''}
+                            onCommit={(val) => handleCellEdit(ind.id, 'ref', val)}
+                            monospace
+                          />
+                          <EditableCell
+                            value={ind.question || ''}
+                            onCommit={(val) => handleCellEdit(ind.id, 'question', val)}
+                            wide
+                          />
+                          <EditableCell
+                            value={ind.search_rules || ''}
+                            onCommit={(val) => handleCellEdit(ind.id, 'search_rules', val)}
+                            placeholder="(sin reglas específicas)"
+                            highlight
+                          />
                         </TableRow>
                       ))}
                     </TableBody>

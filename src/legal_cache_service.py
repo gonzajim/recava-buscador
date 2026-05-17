@@ -133,7 +133,15 @@ def sync_legal_cache() -> dict:
 
     indicators_data = {}
     for ind in INDICATORS:
-        query = f"{ind['ref']} {ind['question']}"
+        question = ind['question']
+        reglas  = ind.get('search_rules', '').strip()
+        if reglas:
+            query = (
+                f"Indicador Objetivo: {question} | "
+                f"CONTEXTO Y REGLAS CRÍTICAS DE BÚSOUEDA: {reglas}"
+            )
+        else:
+            query = f"{ind['ref']} {question}"
         try:
             # Reutilizamos la función cacheada pero con top_k=20
             raw_context = hybrid_search_engine_cached(query, TOP_K_CHUNKS)
@@ -145,7 +153,7 @@ def sync_legal_cache() -> dict:
 
         indicators_data[ind["id"]] = {
             "ref":      ind["ref"],
-            "question": ind["question"],
+            "question": question,
             "chunks":   chunks
         }
         logger.info(f"[legal_cache] Indicador {ind['id']} → {len(chunks)} chunks recuperados.")
@@ -183,7 +191,15 @@ def sync_legal_cache_for_user(uid: str, indicators: list) -> dict:
 
     indicators_data = {}
     for ind in indicators:
-        query = f"{ind.get('ref', '')} {ind.get('question', '')}"
+        question = ind.get('question', '')
+        reglas   = ind.get('search_rules', '').strip()
+        if reglas:
+            query = (
+                f"Indicador Objetivo: {question} | "
+                f"CONTEXTO Y REGLAS CRÍTICAS DE BÚSOUEDA: {reglas}"
+            )
+        else:
+            query = f"{ind.get('ref', '')} {question}"
         try:
             raw_context = hybrid_search_engine_cached(query, TOP_K_CHUNKS)
             chunks = [c.strip() for c in raw_context.split("\n\n") if c.strip()]
@@ -193,7 +209,7 @@ def sync_legal_cache_for_user(uid: str, indicators: list) -> dict:
 
         indicators_data[ind["id"]] = {
             "ref":      ind.get("ref", ""),
-            "question": ind.get("question", ""),
+            "question": question,
             "chunks":   chunks
         }
 

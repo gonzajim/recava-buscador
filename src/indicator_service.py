@@ -57,6 +57,9 @@ DEFAULT_INDICATORS = [
     {"id": "37", "ref": "S1-16 97. b). [2]", "question": "¿Divulga esa relación ajustada por poder adquisitivo entre países?"},
 ]
 
+for ind in DEFAULT_INDICATORS:
+    ind["search_rules"] = ""
+
 # Columnas obligatorias del Excel del usuario
 REQUIRED_COLUMNS = {"NEIS", "Epígrafe", "Indicador"}
 
@@ -93,6 +96,7 @@ def parse_excel(file_stream, filename: str) -> list:
         if c_lower in ['epigrafe', 'epígrafe']: col_map[c] = 'Epígrafe'
         elif c_lower == 'neis': col_map[c] = 'NEIS'
         elif c_lower == 'indicador': col_map[c] = 'Indicador'
+        elif c_lower in ['reglas búsqueda', 'reglas de búsqueda', 'reglas_busqueda', 'search rules', 'search_rules', 'reglas']: col_map[c] = 'Reglas búsqueda'
     df.rename(columns=col_map, inplace=True)
 
     missing = REQUIRED_COLUMNS - set(df.columns)
@@ -111,10 +115,14 @@ def parse_excel(file_stream, filename: str) -> list:
 
     indicators = []
     for idx, row in df.iterrows():
+        sr = str(row.get("Reglas búsqueda", "")).strip()
+        if sr.lower() == "nan":
+            sr = ""
         indicators.append({
             "id":       str(idx + 1),
             "ref":      str(row.get("NEIS", "")).strip() + " " + str(row.get("Epígrafe", "")).strip(),
-            "question": str(row["Indicador"]).strip()
+            "question": str(row["Indicador"]).strip(),
+            "search_rules": sr
         })
 
     logger.info(f"[indicators] Parseados {len(indicators)} indicadores desde '{filename}'.")

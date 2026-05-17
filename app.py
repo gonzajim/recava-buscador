@@ -345,6 +345,56 @@ def upload_indicators():
         return fail(f"Error del servidor: {str(e)}", status=500)
 
 
+@app.route("/api/indicators/save", methods=["POST", "OPTIONS"])
+def save_indicators_inline():
+    """
+    Permite al usuario guardar directamente la lista de indicadores
+    desde la edición inline del frontend (CRUD V3.4).
+    """
+    try:
+        decoded_user = require_firebase_user_or_403()
+        uid = decoded_user.get("uid")
+
+        data = request.get_json()
+        if not data or "indicators" not in data:
+            return fail("Cuerpo JSON inválido. Se espera {'indicators': [...]}", status=400)
+
+        indicators = data["indicators"]
+        if not isinstance(indicators, list):
+            return fail("El campo 'indicators' debe ser una lista", status=400)
+
+        clean_indicators = []
+        for idx, ind in enumerate(indicators):
+            if not isinstance(ind, dict):
+                continue
+            question = str(ind.get("question", "")).strip()
+            if not question:
+                continue
+            
+            clean_indicators.append({
+                "id": str(idx + 1),
+                "ref": str(ind.get("ref", "")).strip(),
+                "question": question,
+                "search_rules": str(ind.get("search_rules", "")).strip()
+            })
+
+        if not clean_indicators:
+            return fail("No se encontraron indicadores válidos", status=400)
+
+        # Persistir en Firestore y disparar regeneración de caché en background
+        save_indicators(uid, clean_indicators)
+
+        return ok({
+            "message": f"{len(clean_indicators)} indicadores guardados y caché en regeneración.",
+            "total": len(clean_indicators),
+            "indicators": clean_indicators
+        })
+
+    except Exception as e:
+        logger.error(f"Error general en save_indicators_inline: {e}", exc_info=True)
+        return fail(f"Error del servidor: {str(e)}", status=500)
+
+
 @app.route("/health", methods=["GET"])
 def health_check():
     return ok({"status": "healthy"})
