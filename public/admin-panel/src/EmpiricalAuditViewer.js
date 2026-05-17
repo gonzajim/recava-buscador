@@ -168,6 +168,8 @@ export default function EmpiricalAuditViewer() {
   const [savingIndicators, setSavingIndicators] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   
+  const [loadingMessage, setLoadingMessage] = useState('El Analizador está extrayendo información del PDF...');
+  
   const pollRef = useRef(null);
 
   const fetchHistory = useCallback(async () => {
@@ -365,8 +367,29 @@ export default function EmpiricalAuditViewer() {
   const totalIndicators = auditData?.indicadores_utilizados_snapshot?.length || indicators.length;
   const exportFilename = `analisis_evidencias_${auditData?.filename?.replace('.pdf','') || 'informe'}_${new Date().toISOString().slice(0,10)}.csv`;
 
+  useEffect(() => {
+    if (!isProcessing) return;
+    const messages = [
+      'Extrayendo texto y metadatos del PDF...',
+      'Estructurando el informe de sostenibilidad...',
+      'Recuperando fragmentos del corpus normativo (RAG)...',
+      'Inyectando directivas de auditoría personalizadas...',
+      'Evaluando indicadores de forma concurrente...',
+      'Generando razonamientos y evidencias literales...',
+      'Consolidando la matriz de hallazgos...',
+      'Un momento más, procesando las últimas evidencias...'
+    ];
+    let currentIndex = 0;
+    setLoadingMessage(messages[0]);
+    const intervalId = setInterval(() => {
+      currentIndex = (currentIndex + 1) % messages.length;
+      setLoadingMessage(messages[currentIndex]);
+    }, 4500);
+    return () => clearInterval(intervalId);
+  }, [isProcessing]);
+
   return (
-    <Box sx={{ p: 3, maxWidth: 1200, mx: 'auto' }}>
+    <Box sx={{ p: 3, maxWidth: '98%', mx: 'auto' }}>
       <Typography variant="h4" gutterBottom fontWeight="black" color="primary.main">
         RECAVA Analizador AI
       </Typography>
@@ -570,7 +593,7 @@ export default function EmpiricalAuditViewer() {
               {isProcessing && (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, bgcolor: 'primary.50', px: 2, py: 1, borderRadius: 2 }}>
                   <CircularProgress size={20} />
-                  <Typography color="primary.main" variant="body2" fontWeight="bold">Buscando evidencias...</Typography>
+                  <Typography color="primary.main" variant="body2" fontWeight="bold">{loadingMessage}</Typography>
                 </Box>
               )}
               {isCompleted && <Chip label="✓ Análisis Finalizado" color="success" sx={{ fontWeight: 'bold' }} />}
@@ -588,17 +611,17 @@ export default function EmpiricalAuditViewer() {
             </Box>
           </Box>
 
-          <TableContainer sx={{ maxHeight: 600, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
-            <Table size="small" stickyHeader>
+          <TableContainer sx={{ maxHeight: 600, border: '1px solid', borderColor: 'divider', borderRadius: 2, overflowX: 'auto' }}>
+            <Table size="small" stickyHeader sx={{ minWidth: 1400 }}>
               <TableHead>
                 <TableRow>
                   <TableCell width={50}><strong>ID</strong></TableCell>
-                  <TableCell width={130}><strong>Referencia</strong></TableCell>
-                  <TableCell><strong>Indicador</strong></TableCell>
+                  <TableCell width={110}><strong>Referencia</strong></TableCell>
+                  <TableCell width={250}><strong>Indicador</strong></TableCell>
                   <TableCell width={140}><strong>Evidencia</strong></TableCell>
                   <TableCell width={70}><strong>Página</strong></TableCell>
-                  <TableCell><strong>Cita Literal</strong></TableCell>
-                  <TableCell><strong>Razonamiento AI</strong></TableCell>
+                  <TableCell width={350}><strong>Cita Literal</strong></TableCell>
+                  <TableCell width={450}><strong>Razonamiento AI</strong></TableCell>
                   <TableCell width={110}><strong>Validación</strong></TableCell>
                 </TableRow>
               </TableHead>
@@ -609,7 +632,7 @@ export default function EmpiricalAuditViewer() {
                       {isProcessing ? (
                         <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
                           <CircularProgress />
-                          <Typography color="text.secondary">El Analizador está extrayendo información del PDF...</Typography>
+                          <Typography color="text.secondary">{loadingMessage}</Typography>
                         </Box>
                       ) : 'Sin hallazgos'}
                     </TableCell>
@@ -627,17 +650,17 @@ export default function EmpiricalAuditViewer() {
                               {ind.ref || '—'}
                             </Typography>
                           </TableCell>
-                          <TableCell sx={{ maxWidth: 220, whiteSpace: 'normal', fontSize: '0.82rem' }}>
+                          <TableCell sx={{ whiteSpace: 'normal', fontSize: '0.82rem' }}>
                             <Tooltip title={ind.question || ''} placement="top" arrow>
                               <span>{ind.question || '—'}</span>
                             </Tooltip>
                           </TableCell>
                           <TableCell><EvidenciaChip value={row.cumple} /></TableCell>
                           <TableCell align="center" sx={{ fontWeight: 'bold' }}>{row.pagina_real}</TableCell>
-                          <TableCell sx={{ maxWidth: 260, whiteSpace: 'normal', fontSize: '0.8rem', color: 'text.secondary', fontStyle: row.evidencia_literal ? 'italic' : 'normal' }}>
+                          <TableCell sx={{ whiteSpace: 'normal', fontSize: '0.8rem', color: 'text.secondary', fontStyle: row.evidencia_literal ? 'italic' : 'normal' }}>
                             {row.evidencia_literal || '—'}
                           </TableCell>
-                          <TableCell sx={{ maxWidth: 280, whiteSpace: 'normal', fontSize: '0.8rem' }}>
+                          <TableCell sx={{ whiteSpace: 'normal', fontSize: '0.8rem' }}>
                             {(() => {
                               const raz = row.razonamiento;
                               if (!raz) return '—';
