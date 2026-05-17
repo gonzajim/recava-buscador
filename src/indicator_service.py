@@ -86,6 +86,15 @@ def parse_excel(file_stream, filename: str) -> list:
     # Normalizar nombres de columna (quitar espacios extra)
     df.columns = [c.strip() for c in df.columns]
 
+    # Renombrar columnas para ser tolerantes con mayúsculas y acentos
+    col_map = {}
+    for c in df.columns:
+        c_lower = c.lower()
+        if c_lower in ['epigrafe', 'epígrafe']: col_map[c] = 'Epígrafe'
+        elif c_lower == 'neis': col_map[c] = 'NEIS'
+        elif c_lower == 'indicador': col_map[c] = 'Indicador'
+    df.rename(columns=col_map, inplace=True)
+
     missing = REQUIRED_COLUMNS - set(df.columns)
     if missing:
         raise ValueError(

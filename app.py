@@ -304,45 +304,45 @@ def upload_indicators():
     """
     Permite al usuario subir un archivo Excel (.xlsx) o CSV con una matriz
     personalizada de indicadores que sobrescribe los 37 base.
-
-    Columnas obligatorias: NEIS, Epígrafe, Indicador
     """
-    decoded_user = require_firebase_user_or_403()
-    uid = decoded_user.get("uid")
-
-    if 'file' not in request.files:
-        return fail("No se encontró ningún archivo en la petición", status=400)
-
-    file = request.files['file']
-    if file.filename == '':
-        return fail("Archivo vacío", status=400)
-
-    filename = file.filename.lower()
-    allowed_mimes = (
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "application/vnd.ms-excel",
-        "text/csv",
-        "application/csv"
-    )
-    if not (filename.endswith(".xlsx") or filename.endswith(".csv")):
-        return fail("Formato no admitido. Usa .xlsx o .csv", status=400)
-
     try:
-        indicators = parse_excel(file.stream, file.filename)
-    except ValueError as e:
-        return fail(str(e), status=400)
+        decoded_user = require_firebase_user_or_403()
+        uid = decoded_user.get("uid")
+
+        if 'file' not in request.files:
+            return fail("No se encontró ningún archivo en la petición", status=400)
+
+        file = request.files['file']
+        if file.filename == '':
+            return fail("Archivo vacío", status=400)
+
+        filename = file.filename.lower()
+        allowed_mimes = (
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-excel",
+            "text/csv",
+            "application/csv"
+        )
+        if not (filename.endswith(".xlsx") or filename.endswith(".csv")):
+            return fail("Formato no admitido. Usa .xlsx o .csv", status=400)
+
+        try:
+            indicators = parse_excel(file.stream, file.filename)
+        except ValueError as e:
+            return fail(str(e), status=400)
+
+        # Persistir en Firestore y disparar regeneración de caché en background
+        save_indicators(uid, indicators)
+
+        return ok({
+            "message":     f"{len(indicators)} indicadores cargados y caché en regeneración.",
+            "total":       len(indicators),
+            "indicators":  indicators
+        })
+
     except Exception as e:
-        logger.error(f"Error parseando Excel de indicadores: {e}", exc_info=True)
-        return fail("Error al procesar el archivo", status=500)
-
-    # Persistir en Firestore y disparar regeneración de caché en background
-    save_indicators(uid, indicators)
-
-    return ok({
-        "message":     f"{len(indicators)} indicadores cargados y caché en regeneración.",
-        "total":       len(indicators),
-        "indicators":  indicators
-    }), 202
+        logger.error(f"Error general en upload_indicators: {e}", exc_info=True)
+        return fail(f"Error del servidor: {str(e)}", status=500)
 
 
 @app.route("/health", methods=["GET"])

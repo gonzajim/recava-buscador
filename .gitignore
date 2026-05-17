@@ -11,6 +11,7 @@ dist/
 .env
 .env.local
 .env.*.local
+env.yaml
 # Los .env.development/.env.production del frontend sí se versiona (no contienen secretos)
 # Añadir aquí si alguna vez se mueven secretos a esos archivos
 

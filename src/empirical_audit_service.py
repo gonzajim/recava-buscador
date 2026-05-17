@@ -143,11 +143,31 @@ def _evaluate_indicator(indicator: dict, gemini_file, legal_cache: dict) -> dict
 
         system_prompt = _build_system_prompt(indicator, chunks)
 
+        schema = {
+            "type": "object",
+            "properties": {
+                "cumple": { "type": "string", "enum": ["SI", "NO", "NA", "FE"] },
+                "evidencia_literal": { "type": "string" },
+                "pagina_real": { "type": "string" },
+                "razonamiento": {
+                    "type": "object",
+                    "properties": {
+                        "comparativa_normativa": { "type": "string" },
+                        "ubicacion_contextual": { "type": "string", "enum": ["Sección autónoma", "Información dispersa", "ausente"] },
+                        "justificacion_vacios": { "type": "string" }
+                    },
+                    "required": ["comparativa_normativa", "ubicacion_contextual", "justificacion_vacios"]
+                }
+            },
+            "required": ["cumple", "evidencia_literal", "pagina_real", "razonamiento"]
+        }
+
         model = genai.GenerativeModel(
             model_name="gemini-2.5-pro",
             generation_config=genai.GenerationConfig(
                 temperature=0.0,
-                response_mime_type="application/json"
+                response_mime_type="application/json",
+                response_schema=schema
             ),
             system_instruction=system_prompt
         )

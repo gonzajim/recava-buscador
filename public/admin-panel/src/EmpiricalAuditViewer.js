@@ -20,11 +20,25 @@ const POLL_INTERVAL_MS = 3000;
 
 // ── Export to CSV ────────────────────────────────────────────────────────────
 function exportToCSV(results, indicatorsMap, filename) {
+  const getRazonamientoText = (raz) => {
+    if (!raz) return '';
+    if (typeof raz === 'string') return raz;
+    if (typeof raz === 'object') {
+      const parts = [];
+      if (raz.comparativa_normativa) parts.push(`Comparativa: ${raz.comparativa_normativa}`);
+      if (raz.ubicacion_contextual) parts.push(`Ubicación: ${raz.ubicacion_contextual}`);
+      if (raz.justificacion_vacios) parts.push(`Vacíos: ${raz.justificacion_vacios}`);
+      return parts.join(' | ');
+    }
+    return String(raz);
+  };
+
   const headers = ['ID', 'Referencia ESRS', 'Indicador', 'Evidencia Encontrada', 'Página', 'Cita Literal', 'Razonamiento Técnico', 'Validación'];
   const rows = Object.values(results)
     .sort((a, b) => Number(a.indicator_id) - Number(b.indicator_id))
     .map((row) => {
       const ind = indicatorsMap[row.indicator_id] || {};
+      const razonamientoText = getRazonamientoText(row.razonamiento);
       return [
         row.indicator_id,
         ind.ref || '',
@@ -32,7 +46,7 @@ function exportToCSV(results, indicatorsMap, filename) {
         row.cumple || '',
         row.pagina_real || '',
         (row.evidencia_literal || '').replace(/\n/g, ' '),
-        (row.razonamiento || '').replace(/\n/g, ' '),
+        razonamientoText.replace(/\n/g, ' '),
         row.human_validation === true ? 'Validado' : 'Pendiente',
       ].map((cell) => `"${String(cell).replace(/"/g, '""')}"`);
     });
@@ -482,7 +496,33 @@ export default function EmpiricalAuditViewer() {
                             {row.evidencia_literal || '—'}
                           </TableCell>
                           <TableCell sx={{ maxWidth: 280, whiteSpace: 'normal', fontSize: '0.8rem' }}>
-                            {row.razonamiento}
+                            {(() => {
+                              const raz = row.razonamiento;
+                              if (!raz) return '—';
+                              if (typeof raz === 'string') return raz;
+                              if (typeof raz === 'object') {
+                                return (
+                                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                                    {raz.comparativa_normativa && (
+                                      <Typography variant="caption" display="block" sx={{ fontSize: '0.78rem' }}>
+                                        <strong>Comparativa:</strong> {raz.comparativa_normativa}
+                                      </Typography>
+                                    )}
+                                    {raz.ubicacion_contextual && (
+                                      <Typography variant="caption" display="block" sx={{ fontSize: '0.78rem', color: 'text.secondary' }}>
+                                        <strong>Ubicación:</strong> {raz.ubicacion_contextual}
+                                      </Typography>
+                                    )}
+                                    {raz.justificacion_vacios && (
+                                      <Typography variant="caption" display="block" sx={{ fontSize: '0.78rem', color: 'error.main' }}>
+                                        <strong>Vacíos:</strong> {raz.justificacion_vacios}
+                                      </Typography>
+                                    )}
+                                  </Box>
+                                );
+                              }
+                              return String(raz);
+                            })()}
                           </TableCell>
                           <TableCell>
                             <FormControlLabel
