@@ -23,6 +23,7 @@ from google.cloud.firestore_v1 import SERVER_TIMESTAMP
 from src.config import logger, firestore_db
 from src.legal_cache_service import get_legal_cache, sync_legal_cache, sync_legal_cache_for_user, needs_sync
 from src.indicator_service import get_indicators
+from src.audit_refinement_service import save_pdf_to_gcs
 import google.generativeai as genai
 
 # ── Lista de indicadores ─────────────────────────────────────────────────────
@@ -299,6 +300,14 @@ def run_empirical_audit_async(thread_id: str, file_path: str, uid: str):
             raise Exception("Gemini File API: procesamiento del PDF fallido.")
 
         logger.info(f"[audit] PDF subido. URI: {gemini_file.uri}")
+
+        # V3.5: Persistir PDF en GCS para Deep Audit posterior
+        try:
+            pdf_gcs_path = save_pdf_to_gcs(file_path, thread_id)
+            doc_ref.update({"pdf_gcs_path": pdf_gcs_path})
+        except Exception as gcs_err:
+            logger.warning(f"[audit] No se pudo guardar PDF en GCS (Deep Audit no disponible): {gcs_err}")
+
         doc_ref.update({"status_detail": "evaluating_indicators"})
 
         # ── 3. Evaluación concurrente de los N indicadores ───────────────────

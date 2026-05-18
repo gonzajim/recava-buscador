@@ -5,7 +5,8 @@ import {
   TableBody, TableCell, TableContainer, TableHead, TableRow,
   CircularProgress, Switch, FormControlLabel, Chip, Tooltip,
   Tabs, Tab, List, ListItem, ListItemText, ListItemSecondaryAction, IconButton, Divider,
-  Alert
+  Alert,
+  Backdrop
 } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
 import HistoryIcon from '@mui/icons-material/History';
@@ -169,6 +170,9 @@ export default function EmpiricalAuditViewer() {
   const [saveSuccess, setSaveSuccess] = useState(false);
   
   const [loadingMessage, setLoadingMessage] = useState('El Analizador está extrayendo información del PDF...');
+
+  // V3.5 — Deep Audit state
+  const [deepAuditLoading, setDeepAuditLoading] = useState(false);
   
   const pollRef = useRef(null);
 
@@ -362,10 +366,31 @@ export default function EmpiricalAuditViewer() {
 
   const results = auditData?.results || {};
   const isCompleted = auditData?.status === 'completed';
-  const isProcessing = auditData?.status === 'processing' || (threadId && !auditData);
+  const isRefining = auditData?.status === 'refining';
+  const isProcessing = auditData?.status === 'processing' || auditData?.status === 'refining' || (threadId && !auditData);
+  const hasDeepAudit = auditData?.tiene_segunda_iteracion === true;
+  const canDeepAudit = isCompleted && !hasDeepAudit && !!auditData?.pdf_gcs_path;
   const completedCount = Object.keys(results).length;
   const totalIndicators = auditData?.indicadores_utilizados_snapshot?.length || indicators.length;
   const exportFilename = `analisis_evidencias_${auditData?.filename?.replace('.pdf','') || 'informe'}_${new Date().toISOString().slice(0,10)}.csv`;
+
+  const handleLaunchDeepAudit = async () => {
+    if (!threadId) return;
+    setDeepAuditLoading(true); setError('');
+    try {
+      const auth = getAuth();
+      const token = await auth.currentUser?.getIdToken();
+      const resp = await fetch(`${API_URL}/api/audit/refine`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id_auditoria: threadId }),
+      });
+      const body = await resp.json();
+      if (!resp.ok) throw new Error(body.error?.message || 'Error al lanzar Deep Audit');
+    } catch (err) {
+      console.error(err); setError(err.message); setDeepAuditLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!isProcessing) return;
@@ -589,14 +614,21 @@ export default function EmpiricalAuditViewer() {
               </Typography>
               {auditData?.filename && <Typography variant="body2" color="text.secondary">Documento: {auditData.filename} ({completedCount} de {totalIndicators} indicadores analizados)</Typography>}
             </Box>
-            <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-              {isProcessing && (
+            <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+              {isProcessing && !isRefining && (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, bgcolor: 'primary.50', px: 2, py: 1, borderRadius: 2 }}>
                   <CircularProgress size={20} />
                   <Typography color="primary.main" variant="body2" fontWeight="bold">{loadingMessage}</Typography>
                 </Box>
               )}
-              {isCompleted && <Chip label="✓ Análisis Finalizado" color="success" sx={{ fontWeight: 'bold' }} />}
+              {isRefining && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, bgcolor: 'warning.50', px: 2, py: 1, borderRadius: 2, border: '1px solid', borderColor: 'warning.300' }}>
+                  <CircularProgress size={20} color="warning" />
+                  <Typography color="warning.dark" variant="body2" fontWeight="bold">Deep Audit en curso — Correlacionando hallazgos…</Typography>
+                </Box>
+              )}
+              {isCompleted && hasDeepAudit && <Chip label="✦ Deep Audit Completado" color="success" variant="outlined" sx={{ fontWeight: 'bold', borderWidth: 2 }} />}
+              {isCompleted && !hasDeepAudit && <Chip label="✓ Análisis Finalizado" color="success" sx={{ fontWeight: 'bold' }} />}
               {auditData?.status === 'error' && <Chip label="✗ Error en proceso" color="error" />}
               {isCompleted && (
                 <Button
@@ -607,6 +639,23 @@ export default function EmpiricalAuditViewer() {
                 >
                   Descargar Reporte
                 </Button>
+              )}
+              {canDeepAudit && (
+                <Button
+                  variant="contained"
+                  color="warning"
+                  onClick={handleLaunchDeepAudit}
+                  disabled={deepAuditLoading}
+                  sx={{ borderRadius: 2, fontWeight: 'bold', color: '#fff',
+                    background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+                    '&:hover': { background: 'linear-gradient(135deg, #d97706 0%, #b45309 100%)' }
+                  }}
+                >
+                  {deepAuditLoading ? <CircularProgress size={20} color="inherit" /> : 'Lanzar Auditoría Avanzada ✦'}
+                </Button>
+              )}
+              {hasDeepAudit && isCompleted && (
+                <Chip label="Auditoría Avanzada Completada" color="warning" variant="filled" size="small" sx={{ fontWeight: 'bold' }} />
               )}
             </Box>
           </Box>
@@ -682,6 +731,16 @@ export default function EmpiricalAuditViewer() {
                                       <Typography variant="caption" display="block" sx={{ fontSize: '0.78rem', color: 'error.main' }}>
                                         <strong>Vacíos:</strong> {raz.justificacion_vacios}
                                       </Typography>
+                                    )}
+                                    {raz.instrucciones_complementarias_expertas && (
+                                      <Box sx={{ mt: 0.5, p: 0.8, bgcolor: 'warning.50', borderRadius: 1, borderLeft: '3px solid', borderColor: 'warning.main' }}>
+                                        <Typography variant="caption" display="block" sx={{ fontSize: '0.78rem', color: 'warning.dark', fontWeight: 'bold' }}>
+                                          ✦ Instrucciones Experto:
+                                        </Typography>
+                                        <Typography variant="caption" display="block" sx={{ fontSize: '0.76rem', color: 'text.primary' }}>
+                                          {raz.instrucciones_complementarias_expertas}
+                                        </Typography>
+                                      </Box>
                                     )}
                                   </Box>
                                 );

@@ -11,6 +11,7 @@ from src.config import app, logger, firestore_db
 
 # --- Gemini y Módulo Empírico ---
 from src.empirical_audit_service import run_empirical_audit_async
+from src.audit_refinement_service import run_deep_audit_async
 from src.legal_cache_service import sync_legal_cache, needs_sync, check_and_warm_cache
 from src.indicator_service import parse_excel, save_indicators, get_indicators
 import threading
@@ -392,6 +393,54 @@ def save_indicators_inline():
 
     except Exception as e:
         logger.error(f"Error general en save_indicators_inline: {e}", exc_info=True)
+        return fail(f"Error del servidor: {str(e)}", status=500)
+
+
+@app.route("/api/audit/refine", methods=["POST", "OPTIONS"])
+def refine_audit():
+    """
+    V3.5 — Lanza la Auditoría Avanzada en Cascada (Deep Audit).
+    Requiere que la auditoría base exista y esté completada.
+    """
+    try:
+        decoded_user = require_firebase_user_or_403()
+        uid = decoded_user.get("uid")
+
+        data = request.get_json()
+        if not data or "id_auditoria" not in data:
+            return fail("Se requiere 'id_auditoria' en el cuerpo JSON", status=400)
+
+        thread_id = data["id_auditoria"]
+
+        # Verificar que la auditoría existe y pertenece al usuario
+        doc_snap = firestore_db.collection("empirical_audits").document(thread_id).get()
+        if not doc_snap.exists:
+            return fail("Auditoría no encontrada", status=404)
+
+        audit_data = doc_snap.to_dict()
+        if audit_data.get("uid") != uid:
+            return fail("No tienes acceso a esta auditoría", status=403)
+
+        if audit_data.get("status") != "completed":
+            return fail("La auditoría base debe estar completada antes de lanzar Deep Audit", status=409)
+
+        if audit_data.get("tiene_segunda_iteracion"):
+            return fail("Esta auditoría ya tiene una segunda iteración completada", status=409)
+
+        if not audit_data.get("pdf_gcs_path"):
+            return fail("PDF no disponible para Deep Audit. Solo auditorías V3.5+ son compatibles.", status=409)
+
+        # Lanzar en background
+        threading.Thread(
+            target=run_deep_audit_async,
+            args=(thread_id, uid),
+            daemon=True
+        ).start()
+
+        return jsonify({"ok": True, "message": "Deep Audit iniciado", "thread_id": thread_id}), 202
+
+    except Exception as e:
+        logger.error(f"Error en refine_audit: {e}", exc_info=True)
         return fail(f"Error del servidor: {str(e)}", status=500)
 
 
